@@ -8,6 +8,9 @@ Push-Location $psScriptRoot
 . .\GitPrompt.ps1
 . .\GitTabExpansion.ps1
 . .\TortoiseGit.ps1
+
+$global:posh_git_dir = (Get-Location).Path
+
 Pop-Location
 
 if (!$Env:HOME) { $Env:HOME = "$Env:HOMEDRIVE$Env:HOMEPATH" }
@@ -19,6 +22,9 @@ Get-TempEnv 'SSH_AUTH_SOCK'
 Export-ModuleMember `
     -Alias @(
         '??') `
+	-Variable @(
+		'posh_git_dir'
+		)`
     -Function @(
         'Invoke-NullCoalescing',
         'Write-GitStatus',

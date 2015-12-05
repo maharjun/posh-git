@@ -66,16 +66,43 @@ function script:gitBranches($filter, $includeHEAD = $false) {
         $prefix = $matches['from']
         $filter = $matches['to']
     }
+    # Handling the splitting into path and name
+    if ($filter -match "^(?<path>.*/)(?<refname>[^/\r\n]*$)"){
+        $filter_path    = $matches['path']
+        $filter_refname = $matches['refname']
+    }
+    else {
+        $filter_path = ""
+        $filter_refname = $filter
+    }
+    
     $branches = @(git branch --no-color | foreach { if($_ -match "^\*?\s*(?<ref>.*)") { $matches['ref'] } }) +
                 @(git branch --no-color -r | foreach { if($_ -match "^  (?<ref>\S+)(?: -> .+)?") { $matches['ref'] } }) +
                 @(if ($includeHEAD) { 'HEAD','FETCH_HEAD','ORIG_HEAD','MERGE_HEAD' })
-    $branches |
-        where { $_ -ne '(no branch)' -and $_ -like "$filter*" } |
-        foreach { $prefix + $_ }
+    
+    
+    # Select by path.
+    # Strip subsequent path if exists and add prefix
+    $branches = $branches |
+                    where { $_ -ne '(no branch)' -and $_ -like "$filter_path*" } | 
+                     foreach {
+                        if ($_ -match "^(?<CurrentPath>$($filter_path)$($filter_refname)[^/\r\n]*)/?.*"){
+                            $prefix + $Matches['CurrentPath']
+                        }
+                    }
+    
+    # Get all unique names
+    $branches = $branches | Sort-Object | Get-Unique
+    
+    # $branches = $branches
+    # $branches = $branches |
+                    # where { $_ -ne '(no branch)' -and $_ -like "$filter*" } |
+                    # foreach { $prefix + $_ }
+    $branches
 }
 
 function script:gitFeatures($filter, $command){
-	$featurePrefix = git config --local --get "gitflow.prefix.$command"
+    $featurePrefix = git config --local --get "gitflow.prefix.$command"
     $branches = @(git branch --no-color | foreach { if($_ -match "^\*?\s*$featurePrefix(?<ref>.*)") { $matches['ref'] } }) 
     $branches |
         where { $_ -ne '(no branch)' -and $_ -like "$filter*" } |
@@ -145,18 +172,18 @@ function script:gitAliases($filter) {
     } | Sort
 }
 
-function script:expandGitAlias($cmd, $rest) {
+function script:expandGitAlias($maincmd, $cmd, $rest) {
     if((git config --get-regexp "^alias\.$cmd`$") -match "^alias\.$cmd (?<cmd>[^!].*)`$") {
-        return "git $($Matches['cmd'])$rest"
+        return $maincmd + " $($Matches['cmd'])$rest"
     } else {
-        return "git $cmd$rest"
+        return $maincmd + " $cmd$rest"
     }
 }
 
 function GitTabExpansion($lastBlock) {
 
     if($lastBlock -match "^$(Get-AliasPattern git) (?<cmd>\S+)(?<args> .*)$") {
-        $lastBlock = expandGitAlias $Matches['cmd'] $Matches['args']
+        $lastBlock = expandGitAlias 'git' $Matches['cmd'] $Matches['args']
     }
 
     # Handles tgit <command> (tortoisegit)
@@ -177,10 +204,10 @@ function GitTabExpansion($lastBlock) {
         "^flow (?<cmd>$($gitflowsubcommands.Keys -join '|'))\s+(?<op>\S*)$" {
             gitCmdOperations $gitflowsubcommands $matches['cmd'] $matches['op']
         }
-		
-		# Handles git flow <command> <op> <name>
+        
+        # Handles git flow <command> <op> <name>
         "^flow (?<command>\S*)\s+(?<op>\S*)\s+(?<name>\S*)$" {
-			gitFeatures $matches['name'] $matches['command']
+            gitFeatures $matches['name'] $matches['command']
         }
 
         # Handles git remote (rename|rm|set-head|set-branches|set-url|show|prune) <stash>
@@ -274,7 +301,7 @@ function GitTabExpansion($lastBlock) {
         }
 
         # Handles git <cmd> <ref>
-        "^(?:checkout|cherry|cherry-pick|diff|difftool|log|merge|rebase|reflog\s+show|reset|revert|show).* (?<ref>\S*)$" {
+        "^(?:checkout|cherry|cherry-pick|diff|difftool|log|merge|rebase|reflog\s+show|reset|revert|show) .*(?<= )(?<ref>\S*)$" {
             gitBranches $matches['ref'] $true
         }
     }
@@ -291,11 +318,15 @@ if ($PowerTab_RegisterTabExpansion)
         $TabExpansionHasOutput.Value = $true
         GitTabExpansion $lastBlock
     }
-    return
+	return
 }
 
+$script:BackupCount = 1
 if (Test-Path Function:\TabExpansion) {
-    Rename-Item Function:\TabExpansion TabExpansionBackup
+    while (Test-Path Function:\TabExpansionBackup$script:BackupCount){
+		$script:BackupCount++;
+	}
+	Rename-Item Function:\TabExpansion TabExpansionBackup$script:BackupCount
 }
 
 function TabExpansion($line, $lastWord) {
@@ -305,8 +336,8 @@ function TabExpansion($line, $lastWord) {
         # Execute git tab completion for all git-related commands
         "^$(Get-AliasPattern git) (.*)" { GitTabExpansion $lastBlock }
         "^$(Get-AliasPattern tgit) (.*)" { GitTabExpansion $lastBlock }
-
+		
         # Fall back on existing tab expansion
-        default { if (Test-Path Function:\TabExpansionBackup) { TabExpansionBackup $line $lastWord } }
+        default { if (Test-Path Function:\TabExpansionBackup$script:BackupCount) { TabExpansionBackup$script:BackupCount $line $lastWord } }
     }
 }
